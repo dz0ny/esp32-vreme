@@ -6,6 +6,9 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_wifi.h>
+#include "esp_adc_cal.h"
+
+int vRef = 1100;
 
 #define I2C_SDA 14
 #define I2C_SCL 12
@@ -40,10 +43,30 @@ Adafruit_BME280 *initSensor(uint8_t addr) {
   return vc;
 }
 
+
+void initBat() {
+
+  esp_adc_cal_characteristics_t adc_chars;
+  esp_adc_cal_value_t val_type = esp_adc_cal_characterize(
+      (adc_unit_t)ADC_UNIT_1, (adc_atten_t)ADC1_CHANNEL_6,
+      (adc_bits_width_t)ADC_WIDTH_BIT_10, 1100, &adc_chars);
+  // Check type of calibration value used to characterize ADC
+  if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
+    Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
+    vRef = adc_chars.vref;
+  } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
+    Serial.printf("Two Point --> coeff_a:%umV coeff_b:%umV\n",
+                  adc_chars.coeff_a, adc_chars.coeff_b);
+  } else {
+    Serial.println("Default vRef: 1100mV");
+  }
+}
+
 float getBatteryVoltage() {
-  // we've set 10-bit ADC resolution 2^10=1024 and voltage divider makes it half
-  // of maximum readable value (which is 3.3V)
-  return analogRead(BATTERY_PIN) * 2.0 * (3.3 / 1024.0);
+  // we've set 10-bit ADC resolution 2^10=1024 and voltage divider makes it half (2.0)
+  // of maximum readable value (which is 3.3V) then we adjust result by vRef coefficient
+  // based on factory callibration
+  return analogRead(BATTERY_PIN) * 2.0 * (3.3 / 1024.0) * (vRef / 1000.0);
 }
 
 void BME280_Sleep(int device_address) {
@@ -110,7 +133,7 @@ void initWIFI() {
 
 void setup() {
   Serial.begin(115200);
-
+  initBat();
   initWIFI();
 
   sensor = initSensor(BME280_ADDRESS_ALTERNATE);
