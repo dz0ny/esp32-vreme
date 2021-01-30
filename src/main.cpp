@@ -1,4 +1,5 @@
 #include "cert.h"
+#include "esp_adc_cal.h"
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
 #include <Arduino.h>
@@ -6,16 +7,20 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <esp_wifi.h>
-#include "esp_adc_cal.h"
 
-int vRef = 1100;
+RTC_DATA_ATTR bool fastWIFI = false;
+RTC_DATA_ATTR int channel = 0;
+RTC_DATA_ATTR IPAddress ip;
+RTC_DATA_ATTR IPAddress gw;
+RTC_DATA_ATTR IPAddress mask;
+RTC_DATA_ATTR IPAddress dns;
 
 #define I2C_SDA 14
 #define I2C_SCL 12
 
 #define BATTERY_PIN 34
 #define uS_TO_S_FACTOR 1000000
-#define TIME_TO_SLEEP 60 * 4 /* Time ESP32 will go to sleep (in minutes) */
+#define TIME_TO_SLEEP 60 * 1 /* Time ESP32 will go to sleep (in minutes) */
 
 typedef struct Meritev {
   float temperatura;
@@ -43,30 +48,10 @@ Adafruit_BME280 *initSensor(uint8_t addr) {
   return vc;
 }
 
-
-void initBat() {
-
-  esp_adc_cal_characteristics_t adc_chars;
-  esp_adc_cal_value_t val_type = esp_adc_cal_characterize(
-      (adc_unit_t)ADC_UNIT_1, (adc_atten_t)ADC1_CHANNEL_6,
-      (adc_bits_width_t)ADC_WIDTH_BIT_10, 1100, &adc_chars);
-  // Check type of calibration value used to characterize ADC
-  if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
-    Serial.printf("eFuse Vref:%u mV", adc_chars.vref);
-    vRef = adc_chars.vref;
-  } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
-    Serial.printf("Two Point --> coeff_a:%umV coeff_b:%umV\n",
-                  adc_chars.coeff_a, adc_chars.coeff_b);
-  } else {
-    Serial.println("Default vRef: 1100mV");
-  }
-}
-
 float getBatteryVoltage() {
-  // we've set 10-bit ADC resolution 2^10=1024 and voltage divider makes it half (2.0)
-  // of maximum readable value (which is 3.3V) then we adjust result by vRef coefficient
-  // based on factory callibration
-  return analogRead(BATTERY_PIN) * 2.0 * (3.3 / 1024.0) * (vRef / 1000.0);
+  // we've set 12-bit ADC resolution 2^12=4096 and voltage divider makes it half
+  // (2.0) of maximum readable value (which is 3.3V)
+  return analogRead(BATTERY_PIN) * 2.0 * (3.3 / 4096.0);
 }
 
 void BME280_Sleep(int device_address) {
@@ -89,7 +74,7 @@ void BME280_Sleep(int device_address) {
 
 String WebString(float val) {
   String a = String(val);
-  a.replace(",", "%2C");
+  a.replace(".", "%2C");
   return a;
 }
 
@@ -100,7 +85,7 @@ void appendDataToSheet() {
                 "&Vlaga=" + WebString(meritev.vlaga) +
                 "&Pritisk=" + WebString(meritev.pritisk) +
                 "&Baterija=" + WebString(meritev.baterija) +
-                "&RSSI=" + WebString(meritev.rssi);
+                "&RSSI=" + String(meritev.rssi);
   Serial.println(data);
   http.begin(URL + data, root_ca.c_str());
   int httpCode = http.GET();
@@ -114,34 +99,51 @@ void appendDataToSheet() {
   http.end();
 }
 
-void initWIFI() {
+bool initWIFI() {
   WiFi.mode(WIFI_STA);
   if (WiFi.status() != WL_CONNECTED) {
     int tries = 0;
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    if (fastWIFI) {
+      Serial.println("FastWiFi loaded");
+      WiFi.config(ip, gw, mask, dns);
+      WiFi.begin(WIFI_SSID, WIFI_PASS, channel);
+    } else {
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+    }
+
     while (WiFi.status() != WL_CONNECTED) {
       tries++;
       Serial.println("|");
-      if (tries == 5)
-        return;
+      if (tries >= 15)
+        return false;
       delay(1000);
     }
     Serial.print("Connected ");
     Serial.println(WiFi.localIP());
+    // cache last connection results in RTC memory so that we can boot faster
+    Serial.println("FastWiFi saved");
+    fastWIFI = true;
+    channel = WiFi.channel();
+    ip = WiFi.localIP();
+    gw = WiFi.gatewayIP();
+    mask = WiFi.subnetMask();
+    dns = WiFi.dnsIP();
   }
+  return true;
 }
 
 void setup() {
   Serial.begin(115200);
-  initBat();
-  initWIFI();
+  if (!initWIFI()) {
+    return;
+  };
 
   sensor = initSensor(BME280_ADDRESS_ALTERNATE);
 
   // set battery measurement pin
   adcAttachPin(BATTERY_PIN);
   adcStart(BATTERY_PIN);
-  analogReadResolution(10); // Default of 12 is not very linear. Recommended
+  analogReadResolution(12); // Default of 12 is not very linear. Recommended
                             // to use 10 or 11 depending on needed resolution.
 
   meritev.pritisk = sensor->readPressure() / 100.0F; // hpa
