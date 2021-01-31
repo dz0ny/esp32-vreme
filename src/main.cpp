@@ -20,7 +20,7 @@ RTC_DATA_ATTR IPAddress dns;
 
 #define BATTERY_PIN 34
 #define uS_TO_S_FACTOR 1000000
-#define TIME_TO_SLEEP 60 * 1 /* Time ESP32 will go to sleep (in minutes) */
+#define TIME_TO_SLEEP 60 * 5 /* Time ESP32 will go to sleep (in minutes) */
 
 typedef struct Meritev {
   float temperatura;
