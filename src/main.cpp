@@ -50,8 +50,8 @@ Adafruit_BME280 *initSensor(uint8_t addr) {
 
 float getBatteryVoltage() {
   // we've set 12-bit ADC resolution 2^12=4096 and voltage divider makes it half
-  // (2.0) of maximum readable value (which is 3.3V)
-  return analogRead(BATTERY_PIN) * 2.0 * (3.3 / 4096.0);
+  // (2.0) of maximum readable value (which is 4.15V for my battery)
+  return analogRead(BATTERY_PIN) * 2.0 * (4.15 / 4096.0);
 }
 
 void BME280_Sleep(int device_address) {

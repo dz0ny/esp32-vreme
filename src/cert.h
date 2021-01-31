@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 
 String root_ca =
